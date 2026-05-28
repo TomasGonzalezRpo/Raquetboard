@@ -47,7 +47,7 @@ async def callback(code: str, response: Response):
         value=token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         max_age=settings.jwt_expire_minutes * 60,
     )
     return redirect
