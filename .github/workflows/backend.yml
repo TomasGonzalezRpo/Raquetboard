@@ -1,0 +1,44 @@
+name: Backend CI
+
+# Railway auto-deploya en cada push a main.
+# Este workflow solo valida que el código esté correcto antes del deploy.
+
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**"]
+  pull_request:
+    paths: ["backend/**"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Check imports & syntax
+        working-directory: backend
+        run: python -c "from app.main import app; print('✅ App imports OK')"
+        env:
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_SERVICE_KEY: placeholder
+          GOOGLE_CLIENT_ID: placeholder
+          GOOGLE_CLIENT_SECRET: placeholder
+          GOOGLE_REDIRECT_URI: https://placeholder.com/auth/callback
+          JWT_SECRET: placeholder-secret-32-chars-minimum
+          ALLOWED_EMAIL: test@test.com
+          FRONTEND_URL: https://placeholder.vercel.app
+          VAPID_PRIVATE_KEY: placeholder
+          VAPID_PUBLIC_KEY: placeholder
+          VAPID_CLAIMS_EMAIL: test@test.com

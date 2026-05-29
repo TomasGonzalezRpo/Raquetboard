@@ -1,788 +1,236 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import { alumnosAPI } from "../api/alumnos";
-import { clasesAPI } from "../api/clases";
-import { inscripcionesAPI } from "../api/inscripciones";
-import { formatDiasHasta, diasHasta } from "../utils/dates";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import NavBar from "../components/NavBar";
+import { alumnos, inscripciones, clases, canchas } from "../api/index";
 
-const COLORS = [
-  ["var(--color-primary-light)", "var(--color-primary)"],
-  ["var(--color-success-light)", "var(--color-success)"],
-  ["#FAEEDA", "#854F0B"],
-  ["#FBEAF0", "#993556"],
-  ["#EEEDFE", "#3C3489"],
-];
-
-function Avatar({ nombre, size = 32 }) {
-  const initials =
-    nombre
-      ?.split(" ")
-      .map((n) => n[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "?";
-  const [bg, color] = COLORS[nombre?.charCodeAt(0) % COLORS.length || 0];
-  return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: bg,
-        color,
-        flexShrink: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: size * 0.32,
-        fontWeight: 500,
-      }}
-    >
-      {initials}
-    </div>
-  );
-}
-
-function ProgressBar({ step, total }) {
-  return (
-    <div
-      style={{
-        height: 3,
-        background: "var(--color-border)",
-        borderRadius: 2,
-        marginBottom: 24,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          height: "100%",
-          borderRadius: 2,
-          background: "var(--color-text-primary)",
-          width: `${(step / total) * 100}%`,
-          transition: "width 0.3s ease",
-        }}
-      />
-    </div>
-  );
-}
+const STEP_LABELS = ["Alumno", "Detalles", "Confirmar"];
 
 export default function RegistrarClase() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const preselectedId = location.state?.alumno_id || null;
-
   const [step, setStep] = useState(1);
-  const [alumnos, setAlumnos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [resultado, setResultado] = useState(null);
-
-  // Selecciones
-  const [alumnoSeleccionado, setAlumnoSeleccionado] = useState(null);
-  const [inscripcion, setInscripcion] = useState(null);
-  const [estado, setEstado] = useState("dada");
-  const [apuntes, setApuntes] = useState("");
-  const [fecha, setFecha] = useState(new Date().toISOString().split("T")[0]);
+  const [alumnosList, setAlumnosList] = useState([]);
+  const [canchasList, setCanchasList] = useState([]);
+  const [alumnoSel, setAlumnoSel] = useState(null);
+  const [inscripcionSel, setInscripcionSel] = useState(null);
+  const [form, setForm] = useState({
+    fecha: new Date().toISOString().slice(0, 10),
+    hora_inicio: "09:00",
+    cancha_id: "",
+    tipo: "individual",
+    notas: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    alumnosAPI
-      .listar()
-      .then((data) => {
-        setAlumnos(data);
-        // Si viene preseleccionado desde AlumnoDetalle
-        if (preselectedId) {
-          const alumno = data.find((a) => a.alumno_id === preselectedId);
-          if (alumno) {
-            setAlumnoSeleccionado(alumno);
-            setInscripcion(alumno.inscripcion_activa || null);
-            setStep(2);
-          }
-        }
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    setLoading(true);
+    Promise.all([alumnos.listar(), canchas.listar()])
+      .then(([a, c]) => { setAlumnosList(a || []); setCanchasList(c || []); if (c?.[0]) setForm(f => ({ ...f, cancha_id: c[0].id })); })
+      .catch(console.error)
+      .finally(() => setLoading(false));
   }, []);
 
-  const seleccionarAlumno = (alumno) => {
-    setAlumnoSeleccionado(alumno);
-    setInscripcion(alumno.inscripcion_activa || null);
-    setStep(2);
-  };
-
-  const guardarClase = async () => {
-    if (!inscripcion) {
-      setError("Este alumno no tiene inscripción activa.");
-      return;
-    }
-    setSaving(true);
-    setError(null);
+  async function selectAlumno(a) {
+    setAlumnoSel(a);
     try {
-      const clase = await clasesAPI.registrar({
-        inscripcion_id: inscripcion.inscripcion_id,
-        alumno_id: alumnoSeleccionado.alumno_id,
-        fecha,
-        estado,
-        apuntes,
-      });
-      // Refrescar inscripcion para mostrar resumen actualizado
-      const resumen = await inscripcionesAPI.resumen(
-        inscripcion.inscripcion_id,
-      );
-      setResultado({ clase, resumen });
-      setStep(3);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
+      const ins = await inscripciones.listar({ alumno_id: a.id, activa: true });
+      setInscripcionSel(ins?.[0] || null);
+    } catch { setInscripcionSel(null); }
+  }
 
-  const ins = inscripcion;
-  const usadas = ins ? parseInt(ins.clases_usadas) : 0;
-  const total = ins ? parseInt(ins.clases_total) : 0;
-  const restantes = total - usadas;
-  const esUltimaClase = estado === "dada" && restantes === 1;
-  const porVencer = ins && diasHasta(ins.fecha_vencimiento) <= 5;
+  async function registrar() {
+    if (!alumnoSel || !inscripcionSel) return;
+    setSubmitting(true);
+    try {
+      await clases.registrar({
+        inscripcion_id: inscripcionSel.id,
+        fecha: form.fecha,
+        hora_inicio: form.hora_inicio,
+        cancha_id: form.cancha_id,
+        tipo: form.tipo,
+        notas: form.notas,
+      });
+      navigate("/");
+    } catch (e) {
+      alert(e.message || "Error al registrar");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "var(--color-bg-secondary)",
-        paddingBottom: 32,
-      }}
-    >
-      <div style={{ maxWidth: 480, margin: "0 auto", padding: "20px 16px 0" }}>
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 20,
-          }}
-        >
-          <button
-            onClick={() => (step > 1 ? setStep(step - 1) : navigate(-1))}
-            style={{
-              background: "none",
-              border: "none",
-              padding: 0,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--color-text-secondary)"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-          </button>
-          <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
-            {step === 3 ? "Listo" : `Paso ${step} de 2`}
-          </span>
+    <div className="page">
+      {/* Header con stepper */}
+      <div className="page-header">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <button onClick={() => step > 1 ? setStep(s => s - 1) : navigate(-1)} style={{ color: "rgba(255,255,255,0.7)", padding: 4 }}><ChevLeft /></button>
+          <h1 style={{ color: "#fff", fontSize: 18, fontWeight: 500, flex: 1 }}>
+            {step === 1 ? "Seleccionar alumno" : step === 2 ? "Detalles de la clase" : "Confirmar clase"}
+          </h1>
         </div>
 
-        {step < 3 && <ProgressBar step={step} total={2} />}
-
-        {/* ── PASO 1: Seleccionar alumno ── */}
-        {step === 1 && (
-          <>
-            <h1 style={{ fontSize: 20, fontWeight: 500, marginBottom: 4 }}>
-              ¿Quién es la clase?
-            </h1>
-            <p
-              style={{
-                fontSize: 13,
-                color: "var(--color-text-secondary)",
-                marginBottom: 20,
-              }}
-            >
-              Selecciona el alumno
-            </p>
-
-            {loading ? (
-              <p style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
-                Cargando...
-              </p>
-            ) : alumnos.length === 0 ? (
-              <p style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
-                No hay alumnos activos.
-              </p>
-            ) : (
-              alumnos.map((alumno) => {
-                const ins = alumno.inscripcion_activa;
-                const restantes = ins
-                  ? parseInt(ins.clases_total) - parseInt(ins.clases_usadas)
-                  : null;
-                const warn = ins && diasHasta(ins.fecha_vencimiento) <= 5;
-
-                return (
-                  <div
-                    key={alumno.alumno_id}
-                    onClick={() => seleccionarAlumno(alumno)}
-                    style={{
-                      background: "var(--color-bg-primary)",
-                      border: "0.5px solid var(--color-border)",
-                      borderRadius: 12,
-                      padding: "12px 14px",
-                      marginBottom: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <Avatar nombre={alumno.nombre} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 500 }}>
-                        {alumno.nombre}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-secondary)",
-                          marginTop: 1,
-                        }}
-                      >
-                        {ins
-                          ? `${ins.paquete_nombre} · ${formatDiasHasta(ins.fecha_vencimiento)}`
-                          : "Sin paquete activo"}
-                      </div>
-                    </div>
-                    {restantes !== null && (
-                      <div style={{ flexShrink: 0, textAlign: "right" }}>
-                        {warn ? (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              padding: "2px 8px",
-                              borderRadius: 99,
-                              background: "var(--color-warning-light)",
-                              color: "var(--color-warning)",
-                              fontWeight: 500,
-                            }}
-                          >
-                            {restantes} clase{restantes !== 1 ? "s" : ""}
-                          </span>
-                        ) : (
-                          <>
-                            <div style={{ fontSize: 13, fontWeight: 500 }}>
-                              {restantes}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 10,
-                                color: "var(--color-text-tertiary)",
-                              }}
-                            >
-                              restantes
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </>
-        )}
-
-        {/* ── PASO 2: Estado y apuntes ── */}
-        {step === 2 && alumnoSeleccionado && (
-          <>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                marginBottom: 20,
-              }}
-            >
-              <Avatar nombre={alumnoSeleccionado.nombre} size={40} />
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 500 }}>
-                  {alumnoSeleccionado.nombre}
-                </div>
-                {ins && (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "var(--color-text-secondary)",
-                      marginTop: 1,
-                    }}
-                  >
-                    {usadas} / {total} clases ·{" "}
-                    {formatDiasHasta(ins.fecha_vencimiento)}
-                  </div>
-                )}
+        {/* Steps */}
+        <div style={{ display: "flex", alignItems: "center" }}>
+          {[1,2,3].map((s, i) => (
+            <div key={s} style={{ display: "flex", alignItems: "center", flex: s < 3 ? 1 : "none" }}>
+              <div style={{ width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 500, background: s < step ? "var(--coral)" : s === step ? "#fff" : "rgba(255,255,255,0.2)", color: s < step ? "#fff" : s === step ? "var(--navy-dark)" : "rgba(255,255,255,0.5)", flexShrink: 0 }}>
+                {s < step ? <CheckIcon /> : s}
               </div>
+              {s < 3 && <div style={{ flex: 1, height: 2, margin: "0 4px", background: s < step ? "var(--coral)" : "rgba(255,255,255,0.2)" }} />}
             </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", marginTop: 4 }}>
+          {STEP_LABELS.map((l, i) => (
+            <span key={l} style={{ fontSize: 9, color: i + 1 === step ? "#fff" : "rgba(255,255,255,0.45)", textAlign: "center", fontWeight: i + 1 === step ? 500 : 400 }}>{l}</span>
+          ))}
+        </div>
+      </div>
 
-            {/* Fecha */}
-            <div style={{ marginBottom: 16 }}>
-              <label
-                style={{
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                  marginBottom: 5,
-                  display: "block",
-                }}
-              >
-                Fecha
-              </label>
-              <input
-                type="date"
-                value={fecha}
-                onChange={(e) => setFecha(e.target.value)}
-                style={{
-                  width: "100%",
-                  background: "var(--color-bg-primary)",
-                  border: "0.5px solid var(--color-border)",
-                  borderRadius: 10,
-                  padding: "10px 12px",
-                  fontSize: 14,
-                  outline: "none",
-                }}
-              />
-            </div>
-
-            {/* Estado */}
-            <div style={{ marginBottom: 16 }}>
-              <label
-                style={{
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                  marginBottom: 8,
-                  display: "block",
-                }}
-              >
-                Estado de la clase
-              </label>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 10,
-                }}
-              >
-                {[
-                  {
-                    value: "dada",
-                    label: "Dada",
-                    color: "var(--color-success)",
-                    bg: "var(--color-success-light)",
-                  },
-                  {
-                    value: "faltante",
-                    label: "Faltó",
-                    color: "var(--color-text-secondary)",
-                    bg: "var(--color-bg-secondary)",
-                  },
-                ].map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setEstado(opt.value)}
-                    style={{
-                      padding: "14px 10px",
-                      borderRadius: 12,
-                      cursor: "pointer",
-                      border:
-                        estado === opt.value
-                          ? `1.5px solid ${opt.color}`
-                          : "0.5px solid var(--color-border)",
-                      background:
-                        estado === opt.value
-                          ? opt.bg
-                          : "var(--color-bg-primary)",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: "50%",
-                        background:
-                          estado === opt.value
-                            ? opt.color
-                            : "var(--color-border)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      {opt.value === "dada" ? (
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="white"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : (
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="white"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                        >
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      )}
-                    </div>
-                    <span
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 500,
-                        color:
-                          estado === opt.value
-                            ? opt.color
-                            : "var(--color-text-secondary)",
-                      }}
-                    >
-                      {opt.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Apuntes */}
-            <div style={{ marginBottom: 16 }}>
-              <label
-                style={{
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                  marginBottom: 5,
-                  display: "block",
-                }}
-              >
-                Apuntes de la sesión
-              </label>
-              <textarea
-                value={apuntes}
-                onChange={(e) => setApuntes(e.target.value)}
-                placeholder="Notas sobre el progreso, ejercicios, próximos objetivos..."
-                rows={3}
-                style={{
-                  width: "100%",
-                  background: "var(--color-bg-primary)",
-                  border: "0.5px solid var(--color-border)",
-                  borderRadius: 10,
-                  padding: "10px 12px",
-                  fontSize: 13,
-                  outline: "none",
-                  resize: "vertical",
-                  lineHeight: 1.5,
-                }}
-              />
-            </div>
-
-            {/* Alerta última clase */}
-            {esUltimaClase && (
-              <div
-                style={{
-                  background: "var(--color-warning-light)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  marginBottom: 14,
-                  fontSize: 13,
-                  color: "var(--color-warning)",
-                }}
-              >
-                ⚠️ Esta será la última clase del paquete actual.
-              </div>
-            )}
-
-            {/* Sin inscripción */}
-            {!inscripcion && (
-              <div
-                style={{
-                  background: "var(--color-danger-light)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  marginBottom: 14,
-                  fontSize: 13,
-                  color: "var(--color-danger)",
-                }}
-              >
-                Este alumno no tiene inscripción activa. Asígnale un paquete
-                primero.
-              </div>
-            )}
-
-            {error && (
-              <div
-                style={{
-                  background: "var(--color-danger-light)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  fontSize: 13,
-                  color: "var(--color-danger)",
-                  marginBottom: 14,
-                }}
-              >
-                {error}
-              </div>
-            )}
-
-            <button
-              onClick={guardarClase}
-              disabled={saving || !inscripcion}
-              style={{
-                width: "100%",
-                padding: 12,
-                background:
-                  saving || !inscripcion
-                    ? "var(--color-text-tertiary)"
-                    : "var(--color-text-primary)",
-                color: "white",
-                border: "none",
-                borderRadius: 12,
-                fontSize: 15,
-                fontWeight: 500,
-                cursor: saving || !inscripcion ? "not-allowed" : "pointer",
-              }}
-            >
-              {saving ? "Guardando..." : "Guardar clase"}
-            </button>
-          </>
-        )}
-
-        {/* ── PASO 3: Confirmación ── */}
-        {step === 3 && resultado && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              paddingTop: 20,
-            }}
-          >
-            <div
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: "50%",
-                background:
-                  estado === "dada"
-                    ? "var(--color-success-light)"
-                    : "var(--color-bg-secondary)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginBottom: 16,
-              }}
-            >
-              {estado === "dada" ? (
-                <svg
-                  width="28"
-                  height="28"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--color-success)"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg
-                  width="28"
-                  height="28"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--color-text-secondary)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              )}
-            </div>
-
-            <h2
-              style={{
-                fontSize: 20,
-                fontWeight: 500,
-                marginBottom: 6,
-                textAlign: "center",
-              }}
-            >
-              {estado === "dada" ? "Clase registrada" : "Falta registrada"}
-            </h2>
-            <p
-              style={{
-                fontSize: 13,
-                color: "var(--color-text-secondary)",
-                textAlign: "center",
-                marginBottom: 24,
-              }}
-            >
-              {alumnoSeleccionado.nombre} · {fecha}
-            </p>
-
-            {/* Resumen paquete */}
-            <div
-              style={{
-                background: "var(--color-bg-primary)",
-                border: "0.5px solid var(--color-border)",
-                borderRadius: 12,
-                padding: "12px 16px",
-                width: "100%",
-                marginBottom: 16,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  padding: "6px 0",
-                  borderBottom: "0.5px solid var(--color-border)",
-                }}
-              >
-                <span
-                  style={{ fontSize: 13, color: "var(--color-text-secondary)" }}
-                >
-                  Clases usadas
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 500 }}>
-                  {resultado.resumen.clases_usadas} /{" "}
-                  {resultado.resumen.clases_total}
-                </span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  padding: "6px 0",
-                  borderBottom: "0.5px solid var(--color-border)",
-                }}
-              >
-                <span
-                  style={{ fontSize: 13, color: "var(--color-text-secondary)" }}
-                >
-                  Clases restantes
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 500 }}>
-                  {resultado.resumen.clases_restantes}
-                </span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  padding: "6px 0",
-                }}
-              >
-                <span
-                  style={{ fontSize: 13, color: "var(--color-text-secondary)" }}
-                >
-                  Vencimiento
-                </span>
-                <span
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    color:
-                      resultado.resumen.dias_hasta_vencimiento <= 5
-                        ? "var(--color-warning)"
-                        : "var(--color-text-primary)",
-                  }}
-                >
-                  {formatDiasHasta(resultado.resumen.fecha_vencimiento)}
-                </span>
-              </div>
-            </div>
-
-            {/* Acción si se agotó el paquete */}
-            {resultado.resumen.clases_restantes === 0 && (
-              <div
-                style={{
-                  background: "var(--color-warning-light)",
-                  borderRadius: 10,
-                  padding: "10px 14px",
-                  width: "100%",
-                  marginBottom: 16,
-                  fontSize: 13,
-                  color: "var(--color-warning)",
-                  textAlign: "center",
-                }}
-              >
-                Paquete completado — recuerda renovarlo
-              </div>
-            )}
-
-            <button
-              onClick={() =>
-                navigate(`/alumnos/${alumnoSeleccionado.alumno_id}`)
-              }
-              style={{
-                width: "100%",
-                padding: 12,
-                marginBottom: 10,
-                background: "var(--color-text-primary)",
-                color: "white",
-                border: "none",
-                borderRadius: 12,
-                fontSize: 14,
-                fontWeight: 500,
-                cursor: "pointer",
-              }}
-            >
-              Ver ficha del alumno
-            </button>
-
-            <button
-              onClick={() => {
-                setStep(1);
-                setAlumnoSeleccionado(null);
-                setInscripcion(null);
-                setEstado("dada");
-                setApuntes("");
-                setResultado(null);
-              }}
-              style={{
-                width: "100%",
-                padding: 12,
-                background: "none",
-                color: "var(--color-text-primary)",
-                border: "0.5px solid var(--color-border)",
-                borderRadius: 12,
-                fontSize: 14,
-                cursor: "pointer",
-              }}
-            >
-              Registrar otra clase
-            </button>
-          </div>
+      <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--gray-400)" }}>Cargando...</div>
+        ) : step === 1 ? (
+          <Step1 alumnos={alumnosList} alumnoSel={alumnoSel} onSelect={a => { selectAlumno(a); setStep(2); }} />
+        ) : step === 2 ? (
+          <Step2 form={form} onChange={setForm} canchas={canchasList} onNext={() => setStep(3)} />
+        ) : (
+          <Step3 alumno={alumnoSel} inscripcion={inscripcionSel} form={form} canchas={canchasList} onSubmit={registrar} submitting={submitting} />
         )}
       </div>
+
+      <NavBar />
     </div>
   );
+}
+
+function Step1({ alumnos, alumnoSel, onSelect }) {
+  const [busqueda, setBusqueda] = useState("");
+  const filtrados = alumnos.filter(a => a.nombre?.toLowerCase().includes(busqueda.toLowerCase()));
+
+  return (
+    <>
+      <div style={{ background: "rgba(26,58,92,0.08)", borderRadius: 10, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+        <SearchIcon />
+        <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar alumno..." style={{ border: "none", background: "transparent", flex: 1, fontSize: 14, outline: "none", color: "var(--gray-900)" }} />
+      </div>
+      <div className="card">
+        {filtrados.length === 0 ? (
+          <div style={{ padding: "20px", textAlign: "center", color: "var(--gray-400)", fontSize: 13 }}>Sin resultados</div>
+        ) : filtrados.map((a, i) => {
+          const sel = alumnoSel?.id === a.id;
+          return (
+            <div key={a.id} onClick={() => onSelect(a)} style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, borderBottom: i < filtrados.length - 1 ? "0.5px solid var(--gray-200)" : "none", cursor: "pointer", background: sel ? "var(--navy-light)" : "transparent" }}>
+              <div style={{ width: 38, height: 38, borderRadius: "50%", background: sel ? "var(--navy)" : "var(--navy-light)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 500, color: sel ? "#fff" : "var(--navy)", flexShrink: 0 }}>
+                {iniciales(a.nombre)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{a.nombre}</div>
+                <div style={{ fontSize: 11, color: "var(--gray-500)", marginTop: 1 }}>{a.clases_restantes ?? "—"} clases restantes</div>
+              </div>
+              {sel && <CheckCircleIcon />}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function Step2({ form, onChange, canchas, onNext }) {
+  return (
+    <>
+      <div className="card">
+        <Campo label="Fecha">
+          <input type="date" value={form.fecha} onChange={e => onChange(f => ({ ...f, fecha: e.target.value }))} style={{ border: "none", background: "transparent", fontSize: 14, fontWeight: 500, outline: "none", color: "var(--gray-900)", textAlign: "right" }} />
+        </Campo>
+        <Campo label="Hora">
+          <input type="time" value={form.hora_inicio} onChange={e => onChange(f => ({ ...f, hora_inicio: e.target.value }))} style={{ border: "none", background: "transparent", fontSize: 14, fontWeight: 500, outline: "none", color: "var(--gray-900)", textAlign: "right" }} />
+        </Campo>
+        <Campo label="Cancha">
+          <select value={form.cancha_id} onChange={e => onChange(f => ({ ...f, cancha_id: e.target.value }))} style={{ border: "none", background: "transparent", fontSize: 14, fontWeight: 500, outline: "none", color: "var(--gray-900)", textAlign: "right" }}>
+            {canchas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Tipo">
+          <select value={form.tipo} onChange={e => onChange(f => ({ ...f, tipo: e.target.value }))} style={{ border: "none", background: "transparent", fontSize: 14, fontWeight: 500, outline: "none", color: "var(--gray-900)", textAlign: "right" }}>
+            <option value="individual">Individual</option>
+            <option value="grupal">Grupal</option>
+          </select>
+        </Campo>
+        <Campo label="Notas" last>
+          <input value={form.notas} onChange={e => onChange(f => ({ ...f, notas: e.target.value }))} placeholder="Opcional..." style={{ border: "none", background: "transparent", fontSize: 13, outline: "none", color: "var(--gray-900)", textAlign: "right", width: "100%" }} />
+        </Campo>
+      </div>
+      <button className="btn-secondary" onClick={onNext}>
+        <ChevRight /> Continuar
+      </button>
+    </>
+  );
+}
+
+function Step3({ alumno, inscripcion, form, canchas, onSubmit, submitting }) {
+  const cancha = canchas.find(c => c.id === form.cancha_id);
+  const restantesTras = (inscripcion?.clases_restantes ?? 0) - 1;
+  return (
+    <>
+      <div className="card">
+        <div className="card-header"><span style={{ fontSize: 13, fontWeight: 500 }}>Resumen</span></div>
+        {[
+          ["Alumno", alumno?.nombre],
+          ["Fecha", form.fecha],
+          ["Hora", form.hora_inicio],
+          ["Cancha", cancha?.nombre ?? "—"],
+          ["Tipo", form.tipo === "grupal" ? "Grupal" : "Individual"],
+          ["Paquete", inscripcion ? `${inscripcion.paquete_nombre} · ${inscripcion.clases_restantes} restantes` : "Sin paquete activo"],
+        ].map(([l, v], i) => (
+          <div key={l} style={{ padding: "9px 14px", display: "flex", justifyContent: "space-between", borderBottom: i < 5 ? "0.5px solid var(--gray-200)" : "none" }}>
+            <span style={{ fontSize: 12, color: "var(--gray-500)" }}>{l}</span>
+            <span style={{ fontSize: 13, fontWeight: 500 }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ padding: "9px 14px", display: "flex", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 12, color: "var(--gray-500)" }}>Tras registrar</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: restantesTras <= 1 ? "var(--coral)" : "var(--success)" }}>{restantesTras} restantes</span>
+        </div>
+      </div>
+      {!inscripcion && (
+        <div style={{ background: "var(--coral-light)", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#7a2e00" }}>
+          Este alumno no tiene un paquete activo. Asignale uno antes de registrar la clase.
+        </div>
+      )}
+      <button className="btn-primary" onClick={onSubmit} disabled={!inscripcion || submitting}>
+        <CheckIcon /> {submitting ? "Registrando..." : "Registrar clase"}
+      </button>
+    </>
+  );
+}
+
+function Campo({ label, children, last }) {
+  return (
+    <div style={{ padding: "9px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: last ? "none" : "0.5px solid var(--gray-200)" }}>
+      <span style={{ fontSize: 12, color: "var(--gray-500)" }}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function iniciales(nombre = "") {
+  return nombre.split(" ").slice(0,2).map(p => p[0]).join("").toUpperCase();
+}
+
+function ChevLeft() {
+  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>;
+}
+function ChevRight() {
+  return <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>;
+}
+function CheckIcon() {
+  return <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+}
+function CheckCircleIcon() {
+  return <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="var(--navy)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>;
+}
+function SearchIcon() {
+  return <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--gray-400)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
 }

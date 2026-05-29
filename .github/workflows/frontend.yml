@@ -1,0 +1,35 @@
+name: Frontend CI
+
+# Vercel auto-deploya en cada push a main (configurable en el dashboard de Vercel).
+# Este workflow valida el build antes del deploy.
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend/**"]
+  pull_request:
+    paths: ["frontend/**"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm install
+
+      - name: Build
+        working-directory: frontend
+        env:
+          VITE_API_URL: https://placeholder.railway.app
+          VITE_VAPID_PUBLIC_KEY: placeholder
+        run: npm run build

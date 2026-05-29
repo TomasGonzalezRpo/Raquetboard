@@ -1,87 +1,82 @@
-"""Router de alumnos."""
-from datetime import date
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from typing import Optional
 
 from app.dependencies.auth import get_current_user
-from app.models.schemas import AlumnoCreate, AlumnoUpdate
-from app.services import sheets
+from app.models.schemas import Alumno, AlumnoCreate, AlumnoUpdate, Clase, UserInfo
+from app.services.db import get_db, next_id
 
 router = APIRouter(prefix="/alumnos", tags=["alumnos"])
 
-SHEET = sheets.SHEETS["alumnos"]
-HEADERS = ["alumno_id", "nombre", "telefono",
-           "email", "fecha_ingreso", "activo", "notas"]
+
+def _enrich_clases_restantes(alumnos: list[dict]) -> list[dict]:
+    """Agrega clases_restantes desde inscripciones activas."""
+    if not alumnos:
+        return alumnos
+    db = get_db()
+    ids = [a["alumno_id"] for a in alumnos]
+    ins = db.table("inscripciones").select("alumno_id, clases_usadas, clases_total") \
+           .in_("alumno_id", ids).eq("estado", "activa").execute().data
+    mapa: dict[str, int] = {}
+    for i in ins:
+        restantes = max(0, i["clases_total"] - i["clases_usadas"])
+        mapa[i["alumno_id"]] = mapa.get(i["alumno_id"], 0) + restantes
+    for a in alumnos:
+        a["clases_restantes"] = mapa.get(a["alumno_id"])
+    return alumnos
 
 
-def _enrich(alumno: dict) -> dict:
-    """Agrega inscripcion_activa al alumno si existe."""
-    ins_rows = sheets.read_sheet(sheets.SHEETS["inscripciones"])
-    activa = next(
-        (i for i in ins_rows
-         if i.get("alumno_id") == alumno["alumno_id"] and i.get("estado") == "activo"),
-        None,
-    )
-    if activa:
-        # Adjunta nombre del paquete
-        pkg, _ = sheets.find_row(
-            sheets.SHEETS["paquetes"], "paquete_id", activa.get("paquete_id", ""))
-        if pkg:
-            activa["paquete_nombre"] = pkg.get("nombre", "")
-    alumno["inscripcion_activa"] = activa
-    return alumno
+@router.get("/", response_model=list[Alumno])
+def listar_alumnos(
+    activo: Optional[bool] = None,
+    q: Optional[str] = None,
+    _: UserInfo = Depends(get_current_user),
+):
+    db = get_db()
+    query = db.table("alumnos").select("*")
+    if activo is not None:
+        query = query.eq("activo", activo)
+    if q:
+        query = query.ilike("nombre", f"%{q}%")
+    rows = query.order("nombre").execute().data
+    return _enrich_clases_restantes(rows)
 
 
-@router.get("/")
-def listar(activo: bool = True, _user=Depends(get_current_user)):
-    rows = sheets.read_sheet(SHEET)
-    activo_str = "TRUE" if activo else "FALSE"
-    filtered = [r for r in rows if r.get("activo", "TRUE") == activo_str]
-    return [_enrich(r) for r in filtered]
-
-
-@router.get("/{alumno_id}")
-def obtener(alumno_id: str, _user=Depends(get_current_user)):
-    row, _ = sheets.find_row(SHEET, "alumno_id", alumno_id)
-    if not row:
+@router.get("/{alumno_id}", response_model=Alumno)
+def obtener_alumno(alumno_id: str, _: UserInfo = Depends(get_current_user)):
+    db = get_db()
+    rows = db.table("alumnos").select("*").eq("alumno_id", alumno_id).execute().data
+    if not rows:
         raise HTTPException(status_code=404, detail="Alumno no encontrado")
-    return _enrich(row)
+    return _enrich_clases_restantes(rows)[0]
 
 
-@router.get("/{alumno_id}/historial")
-def historial(alumno_id: str, limite: int = 20, _user=Depends(get_current_user)):
-    clases = sheets.read_sheet(sheets.SHEETS["clases"])
-    alumno_clases = [c for c in clases if c.get("alumno_id") == alumno_id]
-    alumno_clases.sort(key=lambda c: c.get("fecha", ""), reverse=True)
-    return alumno_clases[:limite]
+@router.post("/", response_model=Alumno, status_code=201)
+def crear_alumno(data: AlumnoCreate, _: UserInfo = Depends(get_current_user)):
+    db = get_db()
+    alumno_id = next_id("alumnos", "alumno_id", "ALU")
+    row = {"alumno_id": alumno_id, "nombre": data.nombre,
+           "telefono": data.telefono, "activo": True, "notas": data.notas}
+    result = db.table("alumnos").insert(row).execute()
+    return result.data[0]
 
 
-@router.post("/", status_code=201)
-def crear(data: AlumnoCreate, _user=Depends(get_current_user)):
-    alumno_id = sheets.next_id(SHEET, "ALU")
-    new_row = {
-        "alumno_id": alumno_id,
-        "nombre": data.nombre,
-        "telefono": data.telefono,
-        "email": data.email or "",
-        "fecha_ingreso": str(date.today()),
-        "activo": "TRUE",
-        "notas": data.notas or "",
-    }
-    sheets.append_row(SHEET, HEADERS, new_row)
-    return new_row
-
-
-@router.patch("/{alumno_id}")
-def actualizar(alumno_id: str, data: AlumnoUpdate, _user=Depends(get_current_user)):
-    row, row_num = sheets.find_row(SHEET, "alumno_id", alumno_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Alumno no encontrado")
-
+@router.patch("/{alumno_id}", response_model=Alumno)
+def editar_alumno(alumno_id: str, data: AlumnoUpdate, _: UserInfo = Depends(get_current_user)):
+    db = get_db()
     updates = data.model_dump(exclude_none=True)
-    if "activo" in updates:
-        updates["activo"] = "TRUE" if updates["activo"] else "FALSE"
+    if not updates:
+        raise HTTPException(status_code=400, detail="Sin campos para actualizar")
+    rows = db.table("alumnos").update(updates).eq("alumno_id", alumno_id).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    return _enrich_clases_restantes(rows)[0]
 
-    updated = {**row, **updates}
-    sheets.update_row(SHEET, row_num, HEADERS, updated)
-    return updated
+
+@router.get("/{alumno_id}/historial", response_model=list[Clase])
+def historial_alumno(alumno_id: str, _: UserInfo = Depends(get_current_user)):
+    db = get_db()
+    if not db.table("alumnos").select("alumno_id").eq("alumno_id", alumno_id).execute().data:
+        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    rows = db.table("clases").select("*").eq("alumno_id", alumno_id) \
+             .order("fecha", desc=True).execute().data
+    return rows

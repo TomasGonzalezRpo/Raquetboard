@@ -1,23 +1,20 @@
-const PREFIX = 'raquetboard_'
+const PREFIX = "raquetboard_";
 
-export const cache = {
-  set(key, data) {
+export const storage = {
+  get(key, fallback = null) {
     try {
-      localStorage.setItem(PREFIX + key, JSON.stringify({ data, ts: Date.now() }))
-    } catch {}
-  },
-  get(key, maxAgeMs = 5 * 60 * 1000) {
-    try {
-      const raw = localStorage.getItem(PREFIX + key)
-      if (!raw) return null
-      const { data, ts } = JSON.parse(raw)
-      if (Date.now() - ts > maxAgeMs) return null
-      return data
+      const val = localStorage.getItem(PREFIX + key);
+      return val !== null ? JSON.parse(val) : fallback;
     } catch {
-      return null
+      return fallback;
     }
   },
-  clear(key) {
-    try { localStorage.removeItem(PREFIX + key) } catch {}
+  set(key, value) {
+    try {
+      localStorage.setItem(PREFIX + key, JSON.stringify(value));
+    } catch {}
   },
-}
+  remove(key) {
+    localStorage.removeItem(PREFIX + key);
+  },
+};

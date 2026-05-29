@@ -1,113 +1,122 @@
-"""Router de reservas."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from datetime import date
+from typing import Optional
 
 from app.dependencies.auth import get_current_user
-from app.models.schemas import ReservaCreate, ReservaUpdate
-from app.services import sheets
+from app.models.schemas import Reserva, ReservaCreate, ReservaUpdate, UserInfo
+from app.services.db import get_db, next_id
 
 router = APIRouter(prefix="/reservas", tags=["reservas"])
 
-SHEET = sheets.SHEETS["reservas"]
-HEADERS = ["reserva_id", "alumno_id", "cancha_id", "fecha", "hora_inicio", "hora_fin", "estado", "notas"]
+
+def _enrich(rows: list[dict]) -> list[dict]:
+    for r in rows:
+        if isinstance(r.get("alumnos"), dict):
+            r["alumno_nombre"] = r.pop("alumnos").get("nombre")
+        if isinstance(r.get("canchas"), dict):
+            r["cancha_nombre"] = r.pop("canchas").get("nombre")
+    return rows
 
 
-def _hay_conflicto(cancha_id: str, fecha: str, hora_inicio: str, hora_fin: str,
-                   exclude_id: str = "") -> bool:
-    reservas = sheets.read_sheet(SHEET)
-    for r in reservas:
-        if r.get("reserva_id") == exclude_id:
+def _hay_conflicto(db, cancha_id: str, fecha: str, hora_inicio: str, hora_fin: str, exclude_id: str = "") -> bool:
+    rows = db.table("reservas").select("reserva_id, hora_inicio, hora_fin") \
+             .eq("cancha_id", cancha_id).eq("fecha", fecha) \
+             .neq("estado", "cancelada").execute().data
+    for r in rows:
+        if r["reserva_id"] == exclude_id:
             continue
-        if r.get("cancha_id") != cancha_id or r.get("fecha") != fecha:
-            continue
-        if r.get("estado") == "cancelada":
-            continue
-        # Verificar solapamiento de horario
-        if r.get("hora_inicio", "") < hora_fin and r.get("hora_fin", "") > hora_inicio:
+        # Solapamiento: A empieza antes de que B termine Y A termina después de que B empiece
+        if r["hora_inicio"] < hora_fin and r["hora_fin"] > hora_inicio:
             return True
     return False
 
 
-@router.get("/")
-def listar(desde: str = None, hasta: str = None, alumno_id: str = None,
-           _user=Depends(get_current_user)):
-    reservas = sheets.read_sheet(SHEET)
-    if desde:
-        reservas = [r for r in reservas if r.get("fecha", "") >= desde]
-    if hasta:
-        reservas = [r for r in reservas if r.get("fecha", "") <= hasta]
+@router.get("/", response_model=list[Reserva])
+def listar_reservas(
+    fecha: Optional[str] = None,
+    alumno_id: Optional[str] = None,
+    _: UserInfo = Depends(get_current_user),
+):
+    db = get_db()
+    q = db.table("reservas").select("*, alumnos(nombre), canchas(nombre)")
+    if fecha:
+        q = q.eq("fecha", fecha)
     if alumno_id:
-        reservas = [r for r in reservas if r.get("alumno_id") == alumno_id]
-    reservas.sort(key=lambda r: (r.get("fecha", ""), r.get("hora_inicio", "")))
-    return reservas
+        q = q.eq("alumno_id", alumno_id)
+    rows = q.order("fecha").order("hora_inicio").execute().data
+    return _enrich(rows)
 
 
-@router.post("/", status_code=201)
-def crear(data: ReservaCreate, _user=Depends(get_current_user)):
-    if _hay_conflicto(data.cancha_id, data.fecha, data.hora_inicio, data.hora_fin):
+@router.post("/", response_model=Reserva, status_code=201)
+def crear_reserva(data: ReservaCreate, _: UserInfo = Depends(get_current_user)):
+    db = get_db()
+    if _hay_conflicto(db, data.cancha_id, str(data.fecha), data.hora_inicio, data.hora_fin):
         raise HTTPException(status_code=409, detail="Conflicto de horario en esta cancha")
 
-    reserva_id = sheets.next_id(SHEET, "RES")
-    new_row = {
-        "reserva_id": reserva_id,
-        "alumno_id": data.alumno_id,
-        "cancha_id": data.cancha_id,
-        "fecha": data.fecha,
-        "hora_inicio": data.hora_inicio,
-        "hora_fin": data.hora_fin,
-        "estado": "confirmada",
-        "notas": data.notas or "",
+    res_id = next_id("reservas", "reserva_id", "RES")
+    row = {
+        "reserva_id": res_id, "alumno_id": data.alumno_id, "cancha_id": data.cancha_id,
+        "fecha": str(data.fecha), "hora_inicio": data.hora_inicio, "hora_fin": data.hora_fin,
+        "estado": "pendiente", "notas": data.notas,
     }
-    sheets.append_row(SHEET, HEADERS, new_row)
-    return new_row
+    result = db.table("reservas").insert(row).execute()
+    rows = db.table("reservas").select("*, alumnos(nombre), canchas(nombre)") \
+             .eq("reserva_id", res_id).execute().data
+    return _enrich(rows)[0]
 
 
-@router.patch("/{reserva_id}")
-def actualizar(reserva_id: str, data: ReservaUpdate, _user=Depends(get_current_user)):
-    row, row_num = sheets.find_row(SHEET, "reserva_id", reserva_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Reserva no encontrada")
-
+@router.patch("/{reserva_id}", response_model=Reserva)
+def editar_reserva(reserva_id: str, data: ReservaUpdate, _: UserInfo = Depends(get_current_user)):
+    db = get_db()
     updates = data.model_dump(exclude_none=True)
-    updated = {**row, **updates}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Sin campos para actualizar")
 
-    # Re-verificar conflicto si cambia fecha/hora
-    if any(k in updates for k in ("fecha", "hora_inicio", "hora_fin")):
-        if _hay_conflicto(
-            updated["cancha_id"], updated["fecha"],
-            updated["hora_inicio"], updated["hora_fin"],
-            exclude_id=reserva_id,
-        ):
+    if "hora_inicio" in updates or "hora_fin" in updates:
+        actual = db.table("reservas").select("*").eq("reserva_id", reserva_id).execute().data
+        if not actual:
+            raise HTTPException(status_code=404, detail="Reserva no encontrada")
+        r = actual[0]
+        hi = updates.get("hora_inicio", r["hora_inicio"])
+        hf = updates.get("hora_fin", r["hora_fin"])
+        if _hay_conflicto(db, r["cancha_id"], r["fecha"], hi, hf, exclude_id=reserva_id):
             raise HTTPException(status_code=409, detail="Conflicto de horario en esta cancha")
 
-    sheets.update_row(SHEET, row_num, HEADERS, updated)
-    return updated
+    rows = db.table("reservas").update(updates).eq("reserva_id", reserva_id).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    enriched = db.table("reservas").select("*, alumnos(nombre), canchas(nombre)") \
+                 .eq("reserva_id", reserva_id).execute().data
+    return _enrich(enriched)[0]
 
 
 @router.post("/{reserva_id}/convertir-clase", status_code=201)
-def convertir_clase(reserva_id: str, _user=Depends(get_current_user)):
-    """Convierte una reserva en clase registrada."""
-    from app.routers.clases import registrar
-    from app.models.schemas import ClaseCreate
-
-    reserva, _ = sheets.find_row(SHEET, "reserva_id", reserva_id)
-    if not reserva:
+def convertir_a_clase(reserva_id: str, _: UserInfo = Depends(get_current_user)):
+    db = get_db()
+    res_rows = db.table("reservas").select("*").eq("reserva_id", reserva_id).execute().data
+    if not res_rows:
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    res = res_rows[0]
 
-    # Buscar inscripción activa del alumno
-    ins_rows = sheets.read_sheet(sheets.SHEETS["inscripciones"])
-    ins = next(
-        (i for i in ins_rows
-         if i.get("alumno_id") == reserva["alumno_id"] and i.get("estado") == "activo"),
-        None,
-    )
-    if not ins:
+    ins_rows = db.table("inscripciones").select("*") \
+                 .eq("alumno_id", res["alumno_id"]).eq("estado", "activa").execute().data
+    if not ins_rows:
         raise HTTPException(status_code=400, detail="El alumno no tiene inscripción activa")
+    ins = ins_rows[0]
 
-    clase_data = ClaseCreate(
-        inscripcion_id=ins["inscripcion_id"],
-        alumno_id=reserva["alumno_id"],
-        fecha=reserva["fecha"],
-        estado="dada",
-        reserva_id=reserva_id,
-    )
-    return registrar(clase_data, _user)
+    clase_id = next_id("clases", "clase_id", "CLS")
+    db.table("clases").insert({
+        "clase_id": clase_id, "alumno_id": res["alumno_id"],
+        "inscripcion_id": ins["inscripcion_id"], "fecha": res["fecha"],
+        "estado": "dada", "apuntes": "Convertida desde reserva",
+    }).execute()
+
+    nuevas_usadas = ins["clases_usadas"] + 1
+    restantes = ins["clases_total"] - nuevas_usadas
+    db.table("inscripciones").update({
+        "clases_usadas": nuevas_usadas,
+        "estado": "completada" if restantes <= 0 else "activa",
+    }).eq("inscripcion_id", ins["inscripcion_id"]).execute()
+
+    db.table("reservas").update({"estado": "confirmada"}).eq("reserva_id", reserva_id).execute()
+    return {"clase_id": clase_id, "mensaje": "Clase registrada correctamente"}

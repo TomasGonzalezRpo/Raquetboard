@@ -1,34 +1,36 @@
-export function formatFecha(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr + 'T00:00:00')
-  return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })
+const DIAS = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+               "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+export function formatFecha(isoStr) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr + "T12:00:00");
+  return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
 }
 
-export function formatHora(timeStr) {
-  if (!timeStr) return ''
-  return timeStr.slice(0, 5)
+export function formatFechaCorta(isoStr) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr + "T12:00:00");
+  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+export function formatDiaSemana(isoStr) {
+  if (!isoStr) return "";
+  const d = new Date(isoStr + "T12:00:00");
+  return DIAS[d.getDay()];
 }
 
 export function hoy() {
-  return new Date().toISOString().split('T')[0]
+  return new Date().toISOString().split("T")[0];
 }
 
-export function diasHasta(dateStr) {
-  const hoyDate = new Date()
-  hoyDate.setHours(0, 0, 0, 0)
-  const target = new Date(dateStr + 'T00:00:00')
-  const diff = Math.round((target - hoyDate) / (1000 * 60 * 60 * 24))
-  return diff
+export function diasRestantes(isoStr) {
+  if (!isoStr) return null;
+  const d = new Date(isoStr + "T12:00:00");
+  const diff = Math.ceil((d - new Date()) / (1000 * 60 * 60 * 24));
+  return diff;
 }
 
-export function formatDiasHasta(dateStr) {
-  const dias = diasHasta(dateStr)
-  if (dias < 0) return 'Vencido'
-  if (dias === 0) return 'Vence hoy'
-  if (dias === 1) return 'Vence mañana'
-  return `Vence en ${dias} días`
-}
-
-export function nombreDia() {
-  return new Date().toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' })
+export function nombreMes(num) {
+  return MESES[num] || "";
 }

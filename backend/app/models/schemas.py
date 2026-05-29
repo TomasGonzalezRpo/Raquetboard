@@ -1,32 +1,44 @@
-"""Modelos Pydantic para validación de datos de entrada y salida."""
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, Literal
+from datetime import date, datetime
 
 
-# ── Alumno ─────────────────────────────────────────────────────
+# ── Alumnos ────────────────────────────────────────────────────────────────────
 
-class AlumnoCreate(BaseModel):
+class AlumnoBase(BaseModel):
     nombre: str
-    telefono: str
-    email: Optional[str] = ""
-    notas: Optional[str] = ""
+    telefono: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class AlumnoCreate(AlumnoBase):
+    pass
 
 
 class AlumnoUpdate(BaseModel):
     nombre: Optional[str] = None
     telefono: Optional[str] = None
-    email: Optional[str] = None
     notas: Optional[str] = None
     activo: Optional[bool] = None
 
 
-# ── Paquete ────────────────────────────────────────────────────
+class Alumno(AlumnoBase):
+    alumno_id: str
+    activo: bool = True
+    clases_restantes: Optional[int] = None
 
-class PaqueteCreate(BaseModel):
+
+# ── Paquetes ───────────────────────────────────────────────────────────────────
+
+class PaqueteBase(BaseModel):
     nombre: str
     num_clases: int
     precio: float
     vigencia_dias: int
+
+
+class PaqueteCreate(PaqueteBase):
+    pass
 
 
 class PaqueteUpdate(BaseModel):
@@ -36,82 +48,196 @@ class PaqueteUpdate(BaseModel):
     activo: Optional[bool] = None
 
 
-# ── Inscripcion ────────────────────────────────────────────────
+class Paquete(PaqueteBase):
+    paquete_id: str
+    activo: bool = True
+    costo_por_clase: float
+
+
+# ── Inscripciones ──────────────────────────────────────────────────────────────
 
 class InscripcionCreate(BaseModel):
     alumno_id: str
     paquete_id: str
-    fecha_inicio: str  # YYYY-MM-DD
+    fecha_inicio: date
 
 
-# ── Clase ──────────────────────────────────────────────────────
+class InscripcionExtender(BaseModel):
+    dias_extra: int
 
-class ClaseCreate(BaseModel):
+
+class Inscripcion(BaseModel):
     inscripcion_id: str
     alumno_id: str
-    fecha: str  # YYYY-MM-DD
-    estado: str  # dada | faltante | cancelada
-    reserva_id: Optional[str] = ""
-    apuntes: Optional[str] = ""
+    paquete_id: str
+    fecha_inicio: str
+    fecha_vencimiento: str
+    clases_usadas: int
+    clases_total: int
+    clases_restantes: int
+    estado: Literal["activa", "completada", "vencida"]
 
 
-class ClaseUpdate(BaseModel):
-    estado: Optional[str] = None
+class InscripcionResumen(Inscripcion):
+    alumno_nombre: str
+    paquete_nombre: str
+    precio: float
+    total_pagado: float
+    saldo_pendiente: float
+
+
+# ── Clases ─────────────────────────────────────────────────────────────────────
+
+class ClaseCreate(BaseModel):
+    alumno_id: str
+    inscripcion_id: str
+    fecha: date
+    estado: Literal["dada", "falto"]
     apuntes: Optional[str] = None
 
 
-# ── Reserva ────────────────────────────────────────────────────
+class ClaseUpdate(BaseModel):
+    estado: Optional[Literal["dada", "falto"]] = None
+    apuntes: Optional[str] = None
+
+
+class Clase(BaseModel):
+    clase_id: str
+    alumno_id: str
+    inscripcion_id: str
+    fecha: str
+    estado: Literal["dada", "falto"]
+    apuntes: Optional[str] = None
+    alumno_nombre: Optional[str] = None
+
+
+# ── Reservas ───────────────────────────────────────────────────────────────────
 
 class ReservaCreate(BaseModel):
     alumno_id: str
     cancha_id: str
-    fecha: str  # YYYY-MM-DD
-    hora_inicio: str  # HH:MM
-    hora_fin: str     # HH:MM
-    notas: Optional[str] = ""
-
-
-class ReservaUpdate(BaseModel):
-    estado: Optional[str] = None
-    fecha: Optional[str] = None
-    hora_inicio: Optional[str] = None
-    hora_fin: Optional[str] = None
+    fecha: date
+    hora_inicio: str  # "HH:MM"
+    hora_fin: str     # "HH:MM"
     notas: Optional[str] = None
 
 
-# ── Cancha ─────────────────────────────────────────────────────
+class ReservaUpdate(BaseModel):
+    hora_inicio: Optional[str] = None
+    hora_fin: Optional[str] = None
+    notas: Optional[str] = None
+    estado: Optional[Literal["pendiente", "confirmada", "cancelada"]] = None
 
-class CanchaCreate(BaseModel):
-    nombre: str
-    ubicacion: str
-    superficie: Optional[str] = ""
+
+class Reserva(BaseModel):
+    reserva_id: str
+    alumno_id: str
+    cancha_id: str
+    fecha: str
+    hora_inicio: str
+    hora_fin: str
+    estado: Literal["pendiente", "confirmada", "cancelada"]
+    notas: Optional[str] = None
+    alumno_nombre: Optional[str] = None
+    cancha_nombre: Optional[str] = None
 
 
-# ── Pagos ──────────────────────────────────────────────────────
+# ── Pagos ──────────────────────────────────────────────────────────────────────
 
 class PagoCreate(BaseModel):
     inscripcion_id: str
-    alumno_id: str
-    fecha: str  # YYYY-MM-DD
     monto: float
-    metodo: str  # efectivo | transferencia | otro
-    notas: Optional[str] = ""
+    metodo: Literal["efectivo", "transferencia", "otro"]
+    fecha: date
+    notas: Optional[str] = None
 
 
 class PagoUpdate(BaseModel):
     monto: Optional[float] = None
-    metodo: Optional[str] = None
+    metodo: Optional[Literal["efectivo", "transferencia", "otro"]] = None
     notas: Optional[str] = None
 
 
-# ── Notificaciones ─────────────────────────────────────────────
+class Pago(BaseModel):
+    pago_id: str
+    inscripcion_id: str
+    monto: float
+    metodo: Literal["efectivo", "transferencia", "otro"]
+    fecha: str
+    notas: Optional[str] = None
 
-class PushSuscripcion(BaseModel):
+
+class PagosResumen(BaseModel):
+    inscripcion_id: str
+    precio_paquete: float
+    total_pagado: float
+    saldo_pendiente: float
+    pagado_completo: bool
+    pagos: list[Pago]
+
+
+# ── Canchas ────────────────────────────────────────────────────────────────────
+
+class CanchaCreate(BaseModel):
+    nombre: str
+    ubicacion: Optional[str] = None
+    superficie: Optional[str] = None
+
+
+class CanchaUpdate(BaseModel):
+    nombre: Optional[str] = None
+    ubicacion: Optional[str] = None
+    superficie: Optional[str] = None
+    activa: Optional[bool] = None
+
+
+class Cancha(BaseModel):
+    cancha_id: str
+    nombre: str
+    ubicacion: Optional[str] = None
+    superficie: Optional[str] = None
+    activa: bool = True
+
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserInfo(BaseModel):
+    email: str
+    name: str
+    picture: Optional[str] = None
+
+
+# ── Notificaciones ─────────────────────────────────────────────────────────────
+
+class PushSubscription(BaseModel):
     endpoint: str
     keys: dict
 
 
-class PushMensaje(BaseModel):
-    titulo: str
-    mensaje: str
-    url: Optional[str] = "/"
+class PushMessage(BaseModel):
+    title: str
+    body: str
+    url: Optional[str] = None
+
+
+# ── Dashboard ──────────────────────────────────────────────────────────────────
+
+class DashboardMetricas(BaseModel):
+    clases_hoy: int
+    alumnos_activos: int
+    clases_completadas_hoy: int
+    paquetes_por_vencer: int
+
+
+class AlertaVencimiento(BaseModel):
+    alumno_id: str
+    alumno_nombre: str
+    inscripcion_id: str
+    clases_restantes: int
+    dias_para_vencer: Optional[int] = None
+    tipo: Literal["clases", "vencimiento"]

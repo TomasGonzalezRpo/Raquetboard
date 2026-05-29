@@ -1,17 +1,16 @@
-# Dependencias de Node.js (son pesadas y se regeneran con npm install)
-frontend/node_modules/
+# Backend
+backend/.env
+backend/service_account.json
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/venv/
 
-# Archivos de compilación de React/Vite/Vue
+# Frontend
+frontend/.env.local
+frontend/node_modules/
 frontend/dist/
 
-# Entorno virtual de Python (no se debe subir al repo)
-backend/.venv/
-
-# Archivos temporales de Python
-backend/__pycache__/
-
-# Archivos de configuración sensible (¡NUNCA subas tus llaves o contraseñas!)
-**/.env
-
-# Archivos basura del sistema operativo (macOS)
-**/.DS_Store
+# General
+.DS_Store
+*.log

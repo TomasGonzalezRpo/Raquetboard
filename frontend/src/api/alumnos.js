@@ -1,9 +1,13 @@
 import { api } from "./client";
 
-export const alumnosAPI = {
-  listar: (activo = true) => api.get(`/alumnos?activo=${activo}`),
+export const alumnos = {
+  listar: (params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    return api.get(`/alumnos${q ? "?" + q : ""}`);
+  },
   obtener: (id) => api.get(`/alumnos/${id}`),
-  historial: (id, params = "") => api.get(`/alumnos/${id}/historial${params}`),
   crear: (data) => api.post("/alumnos", data),
-  actualizar: (id, data) => api.patch(`/alumnos/${id}`, data),
+  editar: (id, data) => api.patch(`/alumnos/${id}`, data),
+  archivar: (id) => api.patch(`/alumnos/${id}`, { activo: false }),
+  historial: (id) => api.get(`/alumnos/${id}/historial`),
 };
