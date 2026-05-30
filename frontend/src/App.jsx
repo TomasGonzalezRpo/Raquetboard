@@ -9,6 +9,7 @@ import FichaAlumno from "./pages/FichaAlumno";
 import Agenda from "./pages/Agenda";
 import Paquetes from "./pages/Paquetes";
 import RegistrarClase from "./pages/RegistrarClase";
+import NuevoAlumno from "./pages/NuevoAlumno";
 
 function RequireAuth({ children }) {
   const { user, loading } = useAuth();
@@ -22,6 +23,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/alumnos" element={<RequireAuth><Alumnos /></RequireAuth>} />
+      <Route path="/alumnos/nuevo" element={<RequireAuth><NuevoAlumno /></RequireAuth>} />
       <Route path="/alumnos/:id" element={<RequireAuth><FichaAlumno /></RequireAuth>} />
       <Route path="/agenda" element={<RequireAuth><Agenda /></RequireAuth>} />
       <Route path="/paquetes" element={<RequireAuth><Paquetes /></RequireAuth>} />

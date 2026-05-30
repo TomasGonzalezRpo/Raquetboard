@@ -111,11 +111,6 @@ function TabResumen({ alumno, inscripcion, clasesList }) {
         )}
       </div>
       <div className="card">
-        <div className="card-header"><span style={{ fontSize: 13, fontWeight: 500 }}>Datos de contacto</span></div>
-        <InfoRow label="Teléfono" value={alumno.telefono || "—"} />
-        <InfoRow label="Email" value={alumno.email || "—"} last />
-      </div>
-      <div className="card">
         <div className="card-header"><span style={{ fontSize: 13, fontWeight: 500 }}>Estadísticas</span></div>
         <InfoRow label="Clases este mes" value={esteMes} />
         <InfoRow label="Clases totales" value={clasesList.length} last />
